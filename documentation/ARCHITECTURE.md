@@ -1,73 +1,73 @@
-# Quack-Cluster System Architecture
+# Quack-Cluster 系统架构
 
-This document describes the high-level architecture of Quack-Cluster, its design philosophy, and the responsibilities of each core component. The goal is to provide a solid understanding of how the system works as a whole.
+本文档描述了 Quack-Cluster 的高层架构、设计理念以及每个核心组件的职责。目标是帮助读者建立对系统整体工作的扎实理解。
 
------
+---
 
-## 1\. Design Philosophy
+## 1. 设计理念
 
-The Quack-Cluster architecture is based on several key principles to ensure the system is modular, maintainable, and easy to extend:
+Quack-Cluster 架构基于几个关键原则，确保系统模块化、可维护且易于扩展：
 
-  * **Separation of Concerns**: The logic for *planning* a query (what to do) is strictly separated from the logic for *executing* the query (how to do it).
-  * **Single Responsibility Principle (SRP)**: Each module and class has one primary responsibility. The `Planner` only plans, the `Executor` only executes, and a `Worker` only performs a specific task on the data.
-  * **Declarative Execution Plans**: The `Planner` produces a "plan," which is a simple data structure (a Pydantic model). This plan declaratively describes the steps to be executed without including the execution logic itself. This makes the workflow transparent and easy to debug.
-  * **Extensibility**: By separating components, adding new functionality (like a new join strategy or optimization) can be done by modifying or adding components in isolation without disrupting other parts of the system.
+- **关注点分离**：规划查询（做什么）和执行查询（怎么做）的逻辑严格分离。
+- **单一职责原则（SRP）**：每个模块和类只有一个主要职责。`Planner` 只负责规划，`Executor` 只负责执行，`Worker` 只负责在数据上执行特定任务。
+- **声明式执行计划**：`Planner` 产生一个"计划"，这是一个简单的数据结构（Pydantic 模型）。该计划声明性地描述要执行的步骤，而不包含执行逻辑本身。这使得工作流程透明且易于调试。
+- **可扩展性**：通过分离组件，添加新功能（如新的连接策略或优化）可以在不影响系统其他部分的情况下，通过修改或添加组件来完成。
 
------
+---
 
-## 2\. High-Level Execution Flow
+## 2. 高层执行流程
 
-Every SQL query that enters the system goes through a series of well-defined steps.
+每个进入系统的 SQL 查询都会经过一系列明确定义的步骤。
 
 ```mermaid
 graph TD
-    subgraph "Phase 1: Planning (The Brain)"
+    subgraph "阶段 1: 规划（大脑）"
         direction LR
-        A["HTTP Request<br>(e.g., /query with SQL)"] --> B;
-        
-        B{"coordinator.py<br><b>Gateway & Glue</b>"};
+        A["HTTP 请求<br>(如：/query + SQL)"] --> B;
+
+        B{"coordinator.py<br><b>网关 & 粘合剂</b>"};
         style B fill:#f9f,stroke:#333,stroke-width:2px;
 
-        B -- "1 Parse SQL to AST" --> C{"Recursive Resolver<br>Handles CTEs & Subqueries<br><i>Simplifies the AST</i>"};
+        B -- "1. 解析 SQL 为 AST" --> C{"递归解析器<br>处理 CTE 和子查询<br><i>简化 AST</i>"};
         C --> B;
 
-        B -- "2 Delegate Simplified AST" --> D{"planner.py<br><b>The Brain</b><br>Analyzes AST<br>Selects Execution Strategy"};
+        B -- "2. 委托简化的 AST" --> D{"planner.py<br><b>大脑</b><br>分析 AST<br>选择执行策略"};
         style D fill:#ccf,stroke:#333,stroke-width:2px;
-        
-        D -- "3 Generate Declarative Plan" --> E_sub;
+
+        D -- "3. 生成声明式计划" --> E_sub;
     end
 
-    subgraph "Phase 2: Execution (The Muscle)"
-        
-        E_sub("execution_plan.py<br><b>The Contract / Blueprint</b>");
+    subgraph "阶段 2: 执行（肌肉）"
+
+        E_sub("execution_plan.py<br><b>契约 / 蓝图</b>");
         style E_sub fill:#e6e6e6,stroke:#333,stroke-width:2px,stroke-dasharray: 5 5;
-        
+
         subgraph E_sub
             E1["LocalExecutionPlan"];
             E2["DistributedScanPlan"];
             E3["DistributedShuffleJoinPlan"];
         end
 
-        B -- "4 Delegate Execution with Plan" --> F{"executor.py<br><b>The Muscle</b><br>Receives Plan<br>Orchestrates Ray Workers"};
+        B -- "4. 委托执行计划" --> F{"executor.py<br><b>肌肉</b><br>接收计划<br>协调 Ray Workers"};
         style F fill:#9f9,stroke:#333,stroke-width:2px;
-        
-        F -- "5 Distribute Tasks<br>(e.g., Map-Shuffle-Reduce)" --> G_sub;
-        
-        subgraph "Ray Cluster (Distribution)"
-            G_sub("worker.py<br><b>The Hands / Ray Actor</b>");
+
+        F -- "5. 分发任务<br>(如：Map-Shuffle-Reduce)" --> G_sub;
+
+        subgraph "Ray 集群（分布式）"
+            G_sub("worker.py<br><b>手 / Ray Actor</b>");
             style G_sub fill:#f96,stroke:#333,stroke-width:2px;
             subgraph G_sub
                 direction LR
-                W1["<b>Worker 1</b><br>Methods:<br>- query()<br>- partition_by_key() (Map)"];
+                W1["<b>Worker 1</b><br>方法：<br>- query()<br>- partition_by_key() (Map)"];
                 W2["<b>...</b>"];
-                W3["<b>Worker N</b><br>Methods:<br>- join_partitions() (Reduce)"];
+                W3["<b>Worker N</b><br>方法：<br>- join_partitions() (Reduce)"];
             end
         end
 
-        G_sub -- "6 Return Processed Data" --> H{"executor.py<br><b>Final Aggregation</b><br>Performs final join/sort<br>on coordinator node"};
+        G_sub -- "6. 返回处理后的数据" --> H{"executor.py<br><b>最终聚合</b><br>在协调器上<br>执行最终 join/排序"};
         style H fill:#9f9,stroke:#333,stroke-width:2px;
 
-        H -- "7 Send Final Result" --> I["HTTP Response<br>(JSON or Arrow format)"];
+        H -- "7. 发送最终结果" --> I["HTTP 响应<br>(JSON 或 Arrow 格式)"];
     end
 
     linkStyle 0 stroke-width:2px,fill:none,stroke:green;
@@ -81,55 +81,55 @@ graph TD
     linkStyle 8 stroke-width:2px,fill:none,stroke:green;
 ```
 
------
+---
 
-## 3\. Directory Structure & Core Components
+## 3. 目录结构与核心组件
 
-Here is a detailed explanation of each core component within the `quack_cluster/` directory:
+以下是 `quack_cluster/` 目录中每个核心组件的详细说明：
 
 ### `coordinator.py`
 
-  * **Role**: The main entry point (gateway) and the "glue" that holds other components together.
-  * **Responsibilities**:
-    1.  **Endpoint Management**: Provides the FastAPI `/query` endpoint to receive SQL requests.
-    2.  **Initial Parsing**: Uses `sqlglot` to parse the SQL string into an *Abstract Syntax Tree* (AST).
-    3.  **Recursive Resolver**: Contains the `resolve_and_execute` recursive logic that handles complex SQL structures like **CTEs (WITH clauses)** and **Subqueries**. It "simplifies" the AST by executing these parts first.
-    4.  **Delegation**: After the AST is simplified, it delegates the task to the `Planner` to create a plan and to the `Executor` to run that plan.
+- **角色**：主入口点（网关）和连接其他组件的"粘合剂"。
+- **职责**：
+  1. **端点管理**：提供 FastAPI `/query` 端点接收 SQL 请求。
+  2. **初始解析**：使用 `sqlglot` 将 SQL 字符串解析为抽象语法树（AST）。
+  3. **递归解析器**：`resolve_and_execute` 递归逻辑处理复杂 SQL 结构，如 **CTE（WITH 子句）** 和 **子查询**。它通过先执行这些部分来"简化"AST。
+  4. **委托**：AST 简化后，将任务委托给 `Planner` 创建计划，并委托给 `Executor` 执行计划。
 
 ### `planner.py`
 
-  * **Role**: The "brain" of the query engine.
-  * **Responsibilities**:
-    1.  **AST Analysis**: Receives the simplified AST from the `coordinator`.
-    2.  **Strategy Selection**: Contains all the logic for deciding the *best way* to execute the query. It determines whether the query should be:
-          * Run locally on the coordinator (`LocalExecutionPlan`).
-          * Run as a distributed file scan (`DistributedScanPlan`).
-          * Run as a distributed shuffle join (`DistributedShuffleJoinPlan`).
-    3.  **Plan Creation**: Generates an `ExecutionPlan` object that contains all the information the `Executor` needs to run the query, such as table names, join keys, and SQL templates for the workers.
+- **角色**：查询引擎的"大脑"。
+- **职责**：
+  1. **AST 分析**：接收协调器传来的简化 AST。
+  2. **策略选择**：包含决定查询最佳执行方式的所有逻辑。决定查询应该：
+     - 在协调器上本地运行（`LocalExecutionPlan`）
+     - 作为分布式文件扫描运行（`DistributedScanPlan`）
+     - 作为分布式 shuffle join 运行（`DistributedShuffleJoinPlan`）
+  3. **计划创建**：生成包含 `Executor` 执行查询所需信息的 `ExecutionPlan` 对象，如表名、连接键和 Workers 的 SQL 模板。
 
 ### `execution_plan.py`
 
-  * **Role**: The "contract" or data blueprint.
-  * **Responsibilities**:
-    1.  **Structure Definition**: Defines a series of Pydantic classes (`LocalExecutionPlan`, `DistributedScanPlan`, etc.) that serve as the standard data structure for an execution plan.
-    2.  **Data Validation**: Ensures that the `Planner` provides all the information needed by the `Executor` through Pydantic validation. This prevents errors due to inconsistent data.
+- **角色**："契约"或数据蓝图。
+- **职责**：
+  1. **结构定义**：定义一系列 Pydantic 类（`LocalExecutionPlan`、`DistributedScanPlan` 等）作为执行计划的标准数据结构。
+  2. **数据验证**：通过 Pydantic 验证确保 `Planner` 提供 `Executor` 所需的所有信息。这防止了因数据不一致导致的错误。
 
 ### `executor.py`
 
-  * **Role**: The "muscle" of the query engine.
-  * **Responsibilities**:
-    1.  **Plan Execution**: Receives an `ExecutionPlan` object from the `coordinator`.
-    2.  **Ray Orchestration**: Contains all the logic for interacting with Ray. It calls `DuckDBWorker.remote()`, distributes tasks, and gathers the results (`asyncio.gather`).
-    3.  **Flow Implementation**: Implements the specific workflow for each type of plan (e.g., the *map-shuffle-reduce* flow for a `DistributedShuffleJoinPlan`).
-    4.  **Final Aggregation**: After the data is processed by the workers, the `Executor` is responsible for performing the final aggregation or sorting steps on the coordinator before returning the final result.
+- **角色**：查询引擎的"肌肉"。
+- **职责**：
+  1. **计划执行**：接收协调器传来的 `ExecutionPlan` 对象。
+  2. **Ray 协调**：包含与 Ray 交互的所有逻辑。调用 `DuckDBWorker.remote()`、分发任务并收集结果（`asyncio.gather`）。
+  3. **流程实现**：为每种计划类型实现特定工作流程（如 `DistributedShuffleJoinPlan` 的 map-shuffle-reduce 流程）。
+  4. **最终聚合**：Workers 处理完数据后，`Executor` 负责在返回最终结果前，在协调器上执行最终聚合或排序步骤。
 
 ### `worker.py`
 
-  * **Role**: An individual, distributed unit of work.
-  * **Responsibilities**:
-    1.  **Ray Actor**: Defined as a `@ray.remote class DuckDBWorker`. Each worker runs in its own process.
-    2.  **Specific Task Execution**: Provides methods to perform heavy lifting on the data, such as:
-          * `query()`: Executes a query on a set of Parquet files.
-          * `partition_by_key()`: Reads data and partitions it by a key for a shuffle join (the Map phase).
-          * `join_partitions()`: Receives data partitions from other workers and performs the join locally (the Reduce phase).
-    3.  **Isolation**: Each worker has its own DuckDB connection and is unaware of other workers. It only receives a task, executes it, and returns the result.
+- **角色**：单个分布式工作单元。
+- **职责**：
+  1. **Ray Actor**：定义为 `@ray.remote class DuckDBWorker`。每个 Worker 运行在自己的进程中。
+  2. **特定任务执行**：提供在数据上执行重活的方法，如：
+     - `query()`：在一组 Parquet 文件上执行查询。
+     - `partition_by_key()`：读取数据并按连接键分区（Map 阶段）。
+     - `join_partitions()`：接收来自其他 Workers 的数据分区并本地执行连接（Reduce 阶段）。
+  3. **隔离**：每个 Worker 有自己的 DuckDB 连接，不了解其他 Workers。它只接收任务、执行并返回结果。

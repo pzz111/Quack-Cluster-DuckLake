@@ -1,80 +1,80 @@
-# Quack-Cluster Developer Guide
+# Quack-Cluster 开发者指南
 
-Welcome to the Quack-Cluster team\! This document is a practical guide for developers who want to deeply understand the code workflow, modify it, or add new features to the system.
+欢迎加入 Quack-Cluster 团队！本文档是帮助开发者深入理解代码工作流程、修改代码或向系统添加新功能的实用指南。
 
------
+---
 
-## 1\. Query Execution Flow (Detailed Walkthrough)
+## 1. 查询执行流程（详细演练）
 
-To truly understand how the system works, let's trace a few example queries from start to finish.
+为了真正理解系统工作原理，让我们从头到尾跟踪几个示例查询。
 
-### Walkthrough 1: Simple (Local) Query
+### 演练 1：简单（本地）查询
 
-This query doesn't require data from disk and can be executed instantly.
+此查询不需要磁盘数据，可以立即执行。
 **SQL**: `SELECT 42 * 2;`
 
-1.  **Coordinator**: `execute_query` receives the request. `parse_one` converts the SQL into an AST.
-2.  **Coordinator**: `resolve_and_execute` is called. Since there are no CTEs, UNIONs, or Subqueries, it proceeds directly to the planning logic.
-3.  **Planner**: `create_plan` is called. It detects that this query has no `FROM` clause (no tables).
-4.  **Planner**: It returns a `LocalExecutionPlan` that only contains the original AST.
-5.  **Executor**: `execute` is called. It sees the plan type is `local` and calls `_execute_local`.
-6.  **Executor**: `_execute_local` runs the SQL `SELECT 42 * 2;` using its DuckDB connection and immediately returns the result.
-7.  **Coordinator**: The result (an Arrow table) is received and formatted as JSON/Arrow for the response.
+1. **Coordinator**：`execute_query` 接收请求。`parse_one` 将 SQL 转换为 AST。
+2. **Coordinator**：`resolve_and_execute` 被调用。由于没有 CTE、UNION 或子查询，直接进入规划逻辑。
+3. **Planner**：`create_plan` 被调用。检测到此查询没有 `FROM` 子句（没有表）。
+4. **Planner**：返回一个只包含原始 AST 的 `LocalExecutionPlan`。
+5. **Executor**：`execute` 被调用。看到计划类型是 `local`，调用 `_execute_local`。
+6. **Executor**：`_execute_local` 使用 DuckDB 连接直接运行 SQL `SELECT 42 * 2;` 并立即返回结果。
+7. **Coordinator**：结果（Arrow 表）被接收并格式化为 JSON/Arrow 用于响应。
 
-### Walkthrough 2: Distributed Scan Query
+### 演练 2：分布式扫描查询
 
-This query reads data from a single table, filters it, and performs an aggregation.
+此查询读取单个表、过滤并执行聚合。
 **SQL**: `SELECT passenger_count, COUNT(*) FROM "yellow_tripdata.parquet" WHERE PULocationID > 100 GROUP BY 1;`
 
-1.  **Coordinator**: Similar to the above, the AST is simplified and handed to the Planner.
-2.  **Planner**: `create_plan` is called. It detects one table (`yellow_tripdata.parquet`) and no JOINs.
-3.  **Planner**: It returns a `DistributedScanPlan` containing:
-      * `table_name`: `"yellow_tripdata.parquet"`
-      * `worker_query_template`: `"SELECT * FROM read_parquet({files}) WHERE PULocationID > 100"`
-      * `query_ast`: The original AST to be used for the final aggregation.
-4.  **Executor**: `execute` calls `_execute_scan`.
-5.  **Executor**: `_execute_scan` finds all files matching `yellow_tripdata.parquet*`, creates a Ray worker for each file, and calls `worker.query.remote()` with the template above. All workers operate in parallel to filter the data.
-6.  **Executor**: `asyncio.gather` collects all the results (filtered Arrow tables) from the workers. These results are concatenated (`pa.concat_tables`) into one large table named `combined_arrow_table`.
-7.  **Executor**: It modifies the original AST: the `WHERE` clause is removed (since it was already applied by the workers) and the table name is replaced with `combined_arrow_table`. The final query becomes: `SELECT passenger_count, COUNT(*) FROM combined_arrow_table GROUP BY 1;`.
-8.  **Executor**: This final query is run on the coordinator's DuckDB connection to produce the final aggregation.
-9.  **Coordinator**: The result is returned to the user.
+1. **Coordinator**：与上述类似，AST 被简化并交给 Planner。
+2. **Planner**：`create_plan` 被调用。检测到一个表（`yellow_tripdata.parquet`）且没有 JOIN。
+3. **Planner**：返回一个包含以下内容的 `DistributedScanPlan`：
+   - `table_name`：`"yellow_tripdata.parquet"`
+   - `worker_query_template`：`"SELECT * FROM read_parquet({files}) WHERE PULocationID > 100"`
+   - `query_ast`：原始 AST，用于最终聚合。
+4. **Executor**：`execute` 调用 `_execute_scan`。
+5. **Executor**：`_execute_scan` 找到匹配 `yellow_tripdata.parquet*` 的所有文件，为每个文件创建一个 Ray Worker，并使用上述模板调用 `worker.query.remote()`。所有 Workers 并行操作过滤数据。
+6. **Executor**：`asyncio.gather` 收集所有 Workers 的结果（过滤后的 Arrow 表）。这些结果被连接（`pa.concat_tables`）成一个名为 `combined_arrow_table` 的大表。
+7. **Executor**：修改原始 AST：移除 `WHERE` 子句（因为 Workers 已经应用了），并将表名替换为 `combined_arrow_table`。最终查询变为：`SELECT passenger_count, COUNT(*) FROM combined_arrow_table GROUP BY 1;`。
+8. **Executor**：在协调器的 DuckDB 连接上运行最终查询以产生最终聚合。
+9. **Coordinator**：结果返回给用户。
 
-### Walkthrough 3: Distributed Shuffle Join Query
+### 演练 3：分布式 Shuffle Join 查询
 
-This is the most complex flow.
+这是最复杂的流程。
 **SQL**: `SELECT c.c_name, o.o_orderstatus FROM customer AS c JOIN orders AS o ON c.c_custkey = o.o_custkey;`
 
-1.  **Coordinator**: The AST is simplified and passed to the Planner.
-2.  **Planner**: `create_plan` detects a `JOIN`.
-3.  **Planner**: It returns a `DistributedShuffleJoinPlan` containing:
-      * Left & right table info (`customer`, `orders`).
-      * Alias info (`c`, `o`).
-      * Join key info (`c_custkey`, `o_custkey`).
-      * `worker_join_sql`: A modified version of the query to be run on workers, for example: `SELECT c.c_name, o.o_orderstatus FROM c_local AS c JOIN o_local AS o ON c.c_custkey = o.o_custkey;`
-4.  **Executor**: `execute` calls `_execute_join`. This begins a 3-phase flow:
-      * **Phase 1: Map/Partition**:
-          * The `Executor` finds all files for `customer` and `orders`.
-          * It calls `worker.partition_by_key.remote()` for each file.
-          * Each worker reads its data and divides it into `N` partitions based on `HASH(join_key) % N`. All rows with the same join key are guaranteed to end up in the partition with the same ID.
-      * **Phase 2: Shuffle & Reduce/Join**:
-          * The `Executor` collects all partitions from all workers (this is the "shuffle" that happens in the coordinator's memory). The data is grouped by partition ID.
-          * For each partition ID `i`, the `Executor` takes all left and right partitions, then calls `worker.join_partitions.remote()`.
-          * The worker receiving this task concatenates all left partitions into a single `c_local` table and all right partitions into a single `o_local` table, then executes the `worker_join_sql` on those two tables.
-      * **Phase 3: Finalize**:
-          * The `Executor` gathers the join results from each worker.
-          * These results are concatenated into a single final table named `partial_results`.
-          * If there are aggregations, `ORDER BY`, or `LIMIT` clauses in the original query, the `Executor` will apply them to `partial_results` on the coordinator.
-5.  **Coordinator**: The final result is returned to the user.
+1. **Coordinator**：AST 被简化并传递给 Planner。
+2. **Planner**：`create_plan` 检测到 `JOIN`。
+3. **Planner**：返回一个 `DistributedShuffleJoinPlan`，包含：
+   - 左右表信息（`customer`、`orders`）。
+   - 别名信息（`c`、`o`）。
+   - 连接键信息（`c_custkey`、`o_custkey`）。
+   - `worker_join_sql`：Workers 运行的修改版查询，例如：`SELECT c.c_name, o.o_orderstatus FROM c_local AS c JOIN o_local AS o ON c.c_custkey = o.o_custkey;`
+4. **Executor**：`execute` 调用 `_execute_join`。这开始一个三阶段流程：
+   - **阶段 1：Map/分区**：
+     - `Executor` 找到 `customer` 和 `orders` 的所有文件。
+     - 为每个文件调用 `worker.partition_by_key.remote()`。
+     - 每个 Worker 读取数据并根据 `HASH(join_key) % N` 将其分成 `N` 个分区。所有具有相同连接键的行保证进入相同 ID 的分区。
+   - **阶段 2：Shuffle & Reduce/Join**：
+     - `Executor` 从所有 Workers 收集所有分区（这是发生在协调器内存中的"shuffle"）。数据按分区 ID 分组。
+     - 对于每个分区 ID `i`，`Executor` 获取所有左右分区，然后调用 `worker.join_partitions.remote()`。
+     - 接收此任务的 Worker 将所有左分区连接成一个名为 `c_local` 的表，将所有右分区连接成一个名为 `o_local` 的表，然后在这些两个表上执行 `worker_join_sql`。
+   - **阶段 3：最终化**：
+     - `Executor` 收集每个 Worker 的连接结果。
+     - 这些结果被连接成一个名为 `partial_results` 的最终表。
+     - 如果原始查询有聚合、`ORDER BY` 或 `LIMIT` 子句，`Executor` 将对 `partial_results` 应用它们。
+5. **Coordinator**：最终结果返回给用户。
 
------
+---
 
-## 2\. How to Add a New Feature (Case Study: Broadcast Join)
+## 2. 如何添加新功能（案例研究：广播连接）
 
-This architecture makes it easy to add features. Let's see how to add a **Broadcast Join** strategy, which is efficient if one table is very small.
+此架构使添加功能变得容易。让我们看看如何添加 **广播连接** 策略，当一个表非常小时它很高效。
 
-#### Step 1: Define the New Plan
+#### 步骤 1：定义新计划
 
-Open `quack_cluster/execution_plan.py` and add a new class:
+打开 `quack_cluster/execution_plan.py` 并添加新类：
 
 ```python
 class DistributedBroadcastJoinPlan(BasePlan):
@@ -82,52 +82,51 @@ class DistributedBroadcastJoinPlan(BasePlan):
     large_table_name: str
     small_table_name: str
     small_table_alias: str
-    # Add other relevant fields (join keys, etc.)
+    # 添加其他相关字段（连接键等）
 ```
 
-#### Step 2: Update the Planner
+#### 步骤 2：更新 Planner
 
-Open `quack_cluster/planner.py`. Inside the `create_plan` method, before the `Shuffle Join` logic, add new logic:
+打开 `quack_cluster/planner.py`。在 `create_plan` 方法中，在 `Shuffle Join` 逻辑之前添加新逻辑：
 
 ```python
-# ... inside create_plan, after the LocalExecutionPlan check
+# ... 在 create_plan 中，在 LocalExecutionPlan 检查之后
 if join_expression := query_ast.find(exp.Join):
-    # Check table size (e.g., with 'os.path.getsize')
+    # 检查表大小（如使用 'os.path.getsize'）
     is_left_small = check_if_table_is_small("left_table_name")
-    
+
     if is_left_small:
-        # NEW LOGIC: Create a Broadcast Join Plan
+        # 新逻辑：创建广播连接计划
         return DistributedBroadcastJoinPlan(
-            # ... fill in all required fields ...
+            # ... 填写所有必需字段 ...
         )
 
-    # ... existing Shuffle Join logic ...
-# ...
+    # ... 现有的 Shuffle Join 逻辑 ...
 ```
 
-#### Step 3: Implement the Execution
+#### 步骤 3：实现执行
 
-Open `quack_cluster/executor.py`.
+打开 `quack_cluster/executor.py`。
 
-1.  Add `elif isinstance(plan, DistributedBroadcastJoinPlan):` in the `execute` method.
-2.  Create a new method `async def _execute_broadcast_join(self, plan, con)`:
-      * Read the small table (`small_table_name`) into the coordinator's memory as a single Arrow table.
-      * Create a worker for each file of the large table (`large_table_name`).
-      * Call a new worker method (e.g., `worker.join_with_broadcast.remote()`) and send the small Arrow table as an argument to *every* call. Ray will handle serializing and sending this object efficiently.
-      * Gather the results and perform any final aggregations.
+1. 在 `execute` 方法中添加 `elif isinstance(plan, DistributedBroadcastJoinPlan):`。
+2. 创建新方法 `async def _execute_broadcast_join(self, plan, con)`：
+   - 将小表（`small_table_name`）读取到协调器内存中作为单个 Arrow 表。
+   - 为大表的每个文件（`large_table_name`）创建一个 Worker。
+   - 调用新的 Worker 方法（如 `worker.join_with_broadcast.remote()`）并将小 Arrow 表作为参数发送到*每个*调用。Ray 将高效地序列化和发送此对象。
+   - 收集结果并执行任何最终聚合。
 
-#### Step 4: Add the Worker Capability
+#### 步骤 4：添加 Worker 能力
 
-Open `quack_cluster/worker.py` and add a new method:
+打开 `quack_cluster/worker.py` 并添加新方法：
 
 ```python
 def join_with_broadcast(self, large_table_file: str, broadcast_table: pa.Table, broadcast_alias: str, join_sql: str) -> pa.Table:
-    # Register the small table received from memory
+    # 注册从内存接收的小表
     self.con.register(broadcast_alias, broadcast_table)
-    
-    # Read the large file and execute the join
-    query = join_sql.format(large_table_file=large_table_file) # Modify SQL as needed
+
+    # 读取大文件并执行连接
+    query = join_sql.format(large_table_file=large_table_file) # 根据需要修改 SQL
     return self.con.execute(query).fetch_arrow_table()
 ```
 
-With these four steps, you have integrated a new join strategy without breaking existing flows.
+通过这四个步骤，您已经集成了一种新的连接策略，同时没有破坏现有流程。

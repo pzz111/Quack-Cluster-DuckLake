@@ -1,96 +1,95 @@
-# Quack Cluster API Tutorial
+# Quack Cluster API 教程
 
-Welcome to the Quack Cluster API! This document provides a guide on how to send queries and understand the scope of supported SQL operations.
+欢迎使用 Quack Cluster API！本文档为您提供如何发送查询以及理解支持的 SQL 操作范围的指南。
 
 ---
 
-## 1. How to Query the API
+## 1. 如何查询 API
 
-Querying the service is straightforward. You send an HTTP **POST** request with your SQL query in a JSON payload to the `/query` endpoint.
+查询服务非常简单。您需要发送一个 HTTP **POST** 请求，将 SQL 查询放在 JSON 正文中发送到 `/query` 端点。
 
-### Endpoint
+### 端点
 
 `POST /query`
 
-### Request Body
+### 请求体
 
-The request body must be a JSON object containing a single key, `sql`, whose value is the SQL query you want to execute.
+请求体必须是一个 JSON 对象，包含一个键 `sql`，其值是您要执行的 SQL 查询。
 
 ```json
 {
   "sql": "SELECT * FROM your_table WHERE condition = 'value';"
 }
-````
+```
 
-### Response Formats (Optional)
+### 响应格式（可选）
 
-You can specify the response format using the `format` query parameter.
+您可以使用 `format` 查询参数指定响应格式。
 
-  * `?format=json` (Default): Returns results as a standard JSON array.
-  * `?format=arrow`: Returns results as a binary Apache Arrow stream, which is ideal for high-performance clients and data science applications.
+- `?format=json`（默认）：以标准 JSON 数组格式返回结果。
+- `?format=arrow`：以二进制 Apache Arrow 流格式返回结果，非常适合高性能客户端和数据科学应用。
 
-### Example with cURL
+### 使用 cURL 的完整示例
 
-Here is a complete example of how to query for all data from the `users` table and receive a JSON response.
+以下是如何从 `users` 表查询所有数据并接收 JSON 响应的完整示例。
 
 ```bash
-curl -X POST "[http://127.0.0.1:8000/query?format=json](http://127.0.0.1:8000/query?format=json)" \
+curl -X POST "http://127.0.0.1:8000/query?format=json" \
 -H "Content-Type: application/json" \
 -d '{
     "sql": "SELECT name, city FROM \"users\" ORDER BY name;"
 }'
 ```
 
------
+---
 
-## 2\. Query Scope & SQL Capabilities
+## 2. 查询范围与 SQL 功能
 
-The API leverages the **DuckDB SQL dialect**. You can query collections of data files (like Parquet or CSV) by referring to them as tables. The system supports glob patterns to query multiple files at once (e.g., `"data_part_*.parquet"`).
+该 API 利用了 **DuckDB SQL 方言**。您可以通过将数据文件集合（如 Parquet 或 CSV）当作表来查询。系统支持 glob 模式来同时查询多个文件（例如 `"data_part_*.parquet"`）。
 
-Below is a summary of supported SQL features, confirmed through testing.
+以下是经过测试确认的支持的 SQL 功能摘要。
 
-### ✅ Basic Operations
+### ✅ 基本操作
 
-  * **`SELECT`**: Select all (`*`) or specific columns.
-  * **`FROM`**: Specify tables, including file glob patterns (e.g., `"data_part_*"`).
-  * **`WHERE`**: Filter rows based on conditions.
-  * **`GROUP BY`**: Group rows for aggregate functions.
-  * **`ORDER BY`**: Sort the result set.
-  * **`LIMIT` / `OFFSET`**: Paginate results.
+- **`SELECT`**：选择全部（`*`）或特定列。
+- **`FROM`**：指定表，包括文件 glob 模式（例如 `"data_part_*"`）。
+- **`WHERE`**：根据条件过滤行。
+- **`GROUP BY`**：为聚合函数对行进行分组。
+- **`ORDER BY`**：对结果集进行排序。
+- **`LIMIT` / `OFFSET`**：对结果进行分页。
 
-### ✅ Aggregations & Grouping
+### ✅ 聚合与分组
 
-  * **Aggregate Functions**: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`.
-  * **`HAVING`**: Filter groups after aggregation.
+- **聚合函数**：`COUNT()`、`SUM()`、`AVG()`、`MIN()`、`MAX()`。
+- **`HAVING`**：在聚合后过滤分组。
 
-### ✅ Joins & Set Operations
+### ✅ 连接与集合操作
 
-  * **`INNER JOIN`**: Select matching records from two tables.
-  * **`LEFT JOIN`**: Select all records from the left table and matched records from the right.
-  * **`FULL OUTER JOIN`**: Select all records when there is a match in either the left or right table.
-  * **`UNION ALL`**: Combine the result sets of two or more `SELECT` statements (including duplicates).
+- **`INNER JOIN`**：从两个表中选择匹配的记录。
+- **`LEFT JOIN`**：从左表选择所有记录，并从右表选择匹配的记录。
+- **`FULL OUTER JOIN`**：当左表或右表中有匹配时，选择所有记录。
+- **`UNION ALL`**：合并两个或多个 `SELECT` 语句的结果集（包括重复）。
 
-### ✅ Advanced SQL Features
+### ✅ 高级 SQL 功能
 
-  * **Subqueries**: Nest a `SELECT` statement inside another statement (e.g., in `FROM` or `WHERE IN (...)`).
-  * **Common Table Expressions (CTEs)**: Use the `WITH` clause to define temporary, named result sets.
-  * **Window Functions**: Perform calculations across a set of table rows (e.g., `SUM(...) OVER (PARTITION BY ...)`).
-  * **Conditional Logic**: Use `CASE...WHEN...THEN...ELSE...END` statements.
-  * **Advanced `SELECT` Syntax**:
-      * `SELECT DISTINCT`: Return only unique values.
-      * `SELECT DISTINCT ON (...)`: Return the first row for each unique group.
-      * `SELECT * EXCLUDE (...)`: Select all columns except specified ones.
-      * `SELECT * REPLACE (...)`: Replace a column's value with a new expression.
-      * `SELECT COLUMNS('<regex>')`: Select columns that match a regular expression.
-  * **Date/Time Functions**: Functions like `DATE_TRUNC` to manipulate date/time values.
+- **子查询**：将 `SELECT` 语句嵌套在另一个语句中（例如在 `FROM` 或 `WHERE IN (...)` 中）。
+- **公用表表达式（CTE）**：使用 `WITH` 子句定义临时的命名结果集。
+- **窗口函数**：在一组表行上执行计算（例如 `SUM(...) OVER (PARTITION BY ...)`）。
+- **条件逻辑**：使用 `CASE...WHEN...THEN...ELSE...END` 语句。
+- **高级 `SELECT` 语法**：
+  - `SELECT DISTINCT`：仅返回唯一值。
+  - `SELECT DISTINCT ON (...)`：返回每个唯一组的第一个行。
+  - `SELECT * EXCLUDE (...)`：选择除指定列外的所有列。
+  - `SELECT * REPLACE (...)`：用新表达式替换列的值。
+  - `SELECT COLUMNS('<regex>')`：选择与正则表达式匹配的列。
+- **日期/时间函数**：如 `DATE_TRUNC` 等操作日期/时间值的函数。
 
------
+---
 
-## 3\. Error Handling
+## 3. 错误处理
 
-The API will return standard HTTP status codes to indicate the outcome of a request.
+API 将返回标准 HTTP 状态码来指示请求的结果。
 
-  * **`400 Bad Request`**: Your SQL query has a syntax error. The response body will contain details.
-  * **`404 Not Found`**: A table or file specified in your query does not exist.
-  * **`200 OK`**: The query was successful. An empty result set is still a success.
-
+- **`400 Bad Request`**：您的 SQL 查询有语法错误。响应正文将包含详细错误信息。
+- **`404 Not Found`**：您的查询中指定的表或文件不存在。
+- **`200 OK`**：查询成功。空结果集仍然是成功。

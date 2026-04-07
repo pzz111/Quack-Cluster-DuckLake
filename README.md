@@ -1,110 +1,106 @@
+# 🦆 Quack-Cluster: 基于 DuckDB 和 Ray 的无服务器分布式 SQL 查询引擎
 
-# 🦆 Quack-Cluster: A Serverless Distributed SQL Query Engine with DuckDB and Ray
+[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-[](https://opensource.org/licenses/MIT)
-[](https://www.python.org/downloads/)
-[](https://www.ray.io/)
-[](https://duckdb.org/)
+**Quack-Cluster** 是一个高性能、无服务器的分布式 SQL 查询引擎，专为大规模数据分析而设计。它允许你直接在对象存储（如 AWS S3 或 Google Cloud Storage）中的数据上运行复杂的 SQL 查询，方法是利用 **Python**、**Ray** 分布式计算框架和超快速的 **DuckDB** 分析数据库的强大组合。
 
-**Quack-Cluster** is a high-performance, serverless distributed SQL query engine designed for large-scale data analysis. It allows you to run complex SQL queries directly on data in object storage (like AWS S3 or Google Cloud Storage) by leveraging the combined power of **Python**, the **Ray** distributed computing framework, and the hyper-fast **DuckDB** analytical database.
+对于所有数据分析需求来说，这是一个理想的、轻量级的复杂大数据系统替代方案。
 
-It's an ideal, lightweight alternative to complex big data systems for all your analytical needs.
+---
 
------
+## ✨ 核心特性：一套现代化的分布式数据库
 
-## ✨ Core Features: A Modern Distributed Database
+- **无服务器 & 分布式**：轻松在可扩展的 **Ray 集群**上运行 SQL 查询。无需为数据库需求管理复杂的服务器基础设施。
+- **高速 SQL 处理**：利用 **DuckDB** 内存列式向量查询引擎的惊人速度和 Apache Arrow 数据格式的效率，实现极速分析。
+- **在数据所在地查询**：直接从**AWS S3**、**Google Cloud Storage**和本地文件系统读取数据文件（Parquet、CSV 等），无需 ETL。
+- **Python 原生集成**：使用 Python 构建，Quack-Cluster 可无缝集成到您现有的数据科学、数据工程和机器学习工作流程中。
+- **开源技术栈**：使用**FastAPI**、**Ray** 和 **DuckDB** 等强大的现代开源技术构建。
 
-  * **Serverless & Distributed**: Effortlessly run SQL queries on a scalable **Ray cluster**. Forget about managing complex server infrastructure for your database needs.
-  * **High-Speed SQL Processing**: Utilizes the incredible speed of **DuckDB's** in-memory, columnar-vectorized query engine and the efficiency of the Apache Arrow data format for blazing-fast analytics.
-  * **Query Data Where It Lives**: Natively reads data files (Parquet, CSV, etc.) directly from object storage like **AWS S3**, **Google Cloud Storage**, and local filesystems. No ETL required.
-  * **Python-Native Integration**: Built with Python, Quack-Cluster integrates seamlessly into your existing data science, data engineering, and machine learning workflows.
-  * **Open Source Stack**: Built with a powerful, modern stack of open-source technologies, including **FastAPI**, **Ray**, and **DuckDB**.
+---
 
------
+## 🏛️ 架构：Quack-Cluster 如何执行分布式 SQL
 
-## 🏛️ Architecture: How Quack-Cluster Executes Distributed SQL
+Quack-Cluster 系统设计简洁且可扩展。它跨 Ray 集群分发 SQL 查询，每个工作节点使用嵌入的 DuckDB 实例并行处理部分数据。
 
-The Quack-Cluster system is designed for simplicity and scale. It distributes SQL queries across a Ray cluster, where each worker node uses an embedded DuckDB instance to process a portion of the data in parallel.
+1. **用户**向 Coordinator 的 API 端点发送标准 SQL 查询。
+2. **Coordinator（FastAPI + SQLGlot）** 解析 SQL，识别目标文件（例如使用通配符如 `s3://my-bucket/data/*.parquet`），并生成分布式执行计划。
+3. **Ray 集群**通过向多个**Worker**节点发送任务来协调执行。
+4. 每个**Worker（Ray Actor）**运行一个嵌入的 **DuckDB** 实例，在部分数据上执行其分配的查询片段。
+5. 部分结果由 Coordinator 高效聚合后返回给用户。
 
-1.  A **User** sends a standard SQL query to the Coordinator's API endpoint.
-2.  The **Coordinator (FastAPI + SQLGlot)** parses the SQL, identifies the target files (e.g., using wildcards like `s3://my-bucket/data/*.parquet`), and generates a distributed execution plan.
-3.  The **Ray Cluster** orchestrates the execution by sending tasks to multiple **Worker** nodes.
-4.  Each **Worker (a Ray Actor)** runs an embedded **DuckDB** instance to execute its assigned query fragment on a subset of the data.
-5.  Partial results are efficiently aggregated by the Coordinator and returned to the user.
-
-This architecture enables massive parallel processing (MPP) for your SQL queries, turning a collection of files into a powerful distributed database.
+这种架构为 SQL 查询实现了大规模并行处理（MPP），将一系列文件转变为强大的分布式数据库。
 
 ```mermaid
 graph TD
-    subgraph User
-        A[Client/SDK]
+    subgraph 用户
+        A[客户端/SDK]
     end
 
-    subgraph "Quack-Cluster (Distributed SQL Engine)"
+    subgraph "Quack-Cluster（分布式 SQL 引擎）"
         B[Coordinator API<br>FastAPI + SQLGlot]
 
-        subgraph "Ray Cluster (Distributed Computing)"
+        subgraph "Ray 集群（分布式计算）"
             direction LR
             W1[Worker 1<br>Ray Actor + DuckDB]
             W2[Worker 2<br>Ray Actor + DuckDB]
-            W3[...]
+            W3[其他...]
         end
     end
 
-    subgraph "Data Source"
-        D[Object Storage<br>e.g., AWS S3, GCS, Local Files]
+    subgraph "数据源"
+        D[对象存储<br>如：AWS S3、GCS、本地文件]
     end
 
     A -- "SELECT * FROM 's3://bucket/*.parquet'" --> B
-    B -- "Distributed Execution Plan" --> W1
-    B -- "Distributed Execution Plan" --> W2
-    B -- "Distributed Execution Plan" --> W3
-    W1 -- "Read data partition" --> D
-    W2 -- "Read data partition" --> D
-    W3 -- "Read data partition" --> D
-    W1 -- "Partial SQL Result (Arrow)" --> B
-    W2 -- "Partial SQL Result (Arrow)" --> B
-    W3 -- "Partial SQL Result (Arrow)" --> B
-    B -- "Final Aggregated Result" --> A
+    B -- "分布式执行计划" --> W1
+    B -- "分布式执行计划" --> W2
+    B -- "分布式执行计划" --> W3
+    W1 -- "读取数据分区" --> D
+    W2 -- "读取数据分区" --> D
+    W3 -- "读取数据分区" --> D
+    W1 -- "部分 SQL 结果（Arrow 格式）" --> B
+    W2 -- "部分 SQL 结果（Arrow 格式）" --> B
+    W3 -- "部分 SQL 结果（Arrow 格式）" --> B
+    B -- "最终聚合结果" --> A
 ```
 
------
+---
 
-## 🚀 Getting Started: Deploy Your Own Distributed SQL Cluster
+## 🚀 快速开始：部署您自己的分布式 SQL 集群
 
-You only need **Docker** and `make` to get a local Quack-Cluster running.
+您只需要 **Docker** 和 `make` 就可以运行一个本地 Quack-Cluster。
 
-### 1\. Prerequisites
+### 1️⃣ 前置条件
 
-  * [Docker](https://www.docker.com/products/docker-desktop/)
-  * `make` (pre-installed on Linux/macOS; available on Windows via WSL).
+- [Docker](https://www.docker.com/products/docker-desktop/)
+- `make`（Linux/macOS 预装；Windows 通过 WSL 可用）。
 
-### 2\. Installation & Launch
+### 2️⃣ 安装与启动
 
 ```bash
-# 1. Clone this repository
+# 1. 克隆此仓库
 git clone https://github.com/your-username/quack-cluster.git
 cd quack-cluster
 
-# 2. Generate sample data (creates Parquet files in ./data)
+# 2. 生成示例数据（在 ./data 目录创建 Parquet 文件）
 make data
 
-# 3. Build and launch your distributed cluster
-# This command starts a Ray head node and 2 worker nodes.
+# 3. 构建并启动分布式集群
+# 此命令启动一个 Ray 头节点和 2 个工作节点
 make up scale=2
 ```
 
-Your cluster is now running\! You can monitor the Ray cluster status at the **Ray Dashboard**: `http://localhost:8265`.
+您的集群现在正在运行！您可以在 **Ray Dashboard** 查看集群状态：`http://localhost:8265`
 
+---
 
+## 👨‍🏫 教程：运行分布式 SQL 查询
 
-## 👨‍🏫 Tutorial: Running Distributed SQL Queries
+使用任何 HTTP 客户端（如 `curl` 或 Postman）向 API 发送 SQL 查询。引擎会自动处理使用通配符的文件发现。
 
-Use any HTTP client like `curl` or Postman to send SQL queries to the API. The engine automatically handles file discovery with wildcards.
+### 示例：从多个 Parquet 文件聚合销售数据
 
-### Example: Aggregate Sales Data from Multiple Parquet Files
-
-This query calculates the total sales for each product across all `data_part_*.parquet` files.
+此查询计算所有 `data_part_*.parquet` 文件中每个产品的总销售额。
 
 ```bash
 curl -X 'POST' \
@@ -115,7 +111,7 @@ curl -X 'POST' \
   }'
 ```
 
-*Expected Output:*
+**预期输出：**
 
 ```json
 {
@@ -126,78 +122,80 @@ curl -X 'POST' \
   ]
 }
 ```
------
-
-## 🚀 Testing with Postman
-
-You can easily test all API features using the provided Postman collection.
-
-1.  **Import the Collection and Environment**:
-    * In Postman, click **Import** and select the following files:
-    * **Collection**: `documentation/postman_collection/QuackCluster_API_Tests.json`
-    * **Environment**: `documentation/postman_collection/QuackCluster_postman_environment.json`
-
-2.  **Activate the Environment**:
-    * In the top-right corner of Postman, select **"Quack Cluster Environment"** from the environment dropdown list.
-
-3.  **Send a Request**:
-    * The environment pre-configures the `baseUrl` variable to `http://127.0.0.1:8000`. You can now run any of the pre-built requests in the collection.
-
------
-
-## 💡 Powerful Distributed SQL Capabilities with DuckDB
-
-Quack-Cluster supports a rich subset of the **DuckDB SQL dialect**, enabling complex analytical queries across multiple files and directories.
-
-### ✅ Supported Operations
-
-  * **Basic Queries**: `SELECT`, `FROM`, `WHERE`, `GROUP BY`, `ORDER BY`, `LIMIT`.
-  * **Aggregate Functions**: `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`.
-  * **Distributed Joins**: `INNER JOIN`, `LEFT JOIN`, `FULL OUTER JOIN` across different file sets.
-  * **Advanced SQL**:
-      * Subqueries (e.g., `WHERE IN (...)`)
-      * Common Table Expressions (CTEs) using the `WITH` clause.
-      * Window Functions (e.g., `SUM(...) OVER (PARTITION BY ...)`).
-      * Advanced `SELECT` syntax like `SELECT * EXCLUDE (...)` and `SELECT COLUMNS('<regex>')`.
-  * **File System Functions**: Query collections of Parquet or CSV files using glob patterns (e.g., `"s3://my-data/2025/**/*.parquet"`).
-
------
-
-## 🛠️ Development & Management Commands
-
-Use these `make` commands to manage your development lifecycle.
-
-| Command | Description |
-| :--- | :--- |
-| `make up scale=N` | Starts the cluster with `N` worker nodes. |
-| `make down` | Stops and removes running containers safely. |
-| `make logs` | Tails the logs from all services. |
-| `make build` | Rebuilds the Docker images after a code change. |
-| `make test` | Runs the `pytest` suite inside the `ray-head` container. |
-| `make clean` | **DANGER:** Stops containers and deletes all data volumes. |
-
------
-
-## 🗺️ Project Roadmap
-
-  * [✔] Support for distributed `JOIN` operations.
-  * [✔] Support for Window Functions (`OVER`, `PARTITION BY`).
-  * [ ] Integration with a metadata catalog like **Apache Iceberg** or **Delta Lake**.
-  * [ ] A dedicated Python client (SDK) for a better developer experience.
-
------
-
-## 🤝 Contributing
-
-Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**. Please feel free to open an issue or submit a pull request.
-## 🤖 AI-Powered Development
-
-This project leverages AI tools to accelerate development and improve documentation.
-
-All core architectural decisions, debugging, and final testing are **human-powered** to ensure quality and correctness.
 
 ---
 
-## 📄 License
+## 🚀 使用 Postman 测试
 
-This project is licensed under the MIT License. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
+您可以使用提供的 Postman 集合轻松测试所有 API 功能。
+
+1. **导入集合和环境**：
+   - 在 Postman 中，点击 **Import** 并选择以下文件：
+   - **集合**：`documentation/postman_collection/QuackCluster_API_Tests.json`
+   - **环境**：`documentation/postman_collection/QuackCluster_postman_environment.json`
+
+2. **激活环境**：
+   - 在 Postman 右上角，从环境下拉列表中选择 **"Quack Cluster Environment"**。
+
+3. **发送请求**：
+   - 环境预配置了 `baseUrl` 变量为 `http://127.0.0.1:8000`。您现在可以运行集合中的任何预构建请求。
+
+---
+
+## 💡 使用 DuckDB 的强大分布式 SQL 功能
+
+Quack-Cluster 支持丰富的 **DuckDB SQL 方言**子集，支持跨多个文件和目录的复杂分析查询。
+
+### ✅ 支持的操作
+
+- **基本查询**：`SELECT`、`FROM`、`WHERE`、`GROUP BY`、`ORDER BY`、`LIMIT`
+- **聚合函数**：`COUNT()`、`SUM()`、`AVG()`、`MIN()`、`MAX()`
+- **分布式连接**：`INNER JOIN`、`LEFT JOIN`、`FULL OUTER JOIN`（跨不同文件集）
+- **高级 SQL**：
+  - 子查询（如 `WHERE IN (...)`）
+  - 使用 `WITH` 子句的公用表表达式（CTE）
+  - 窗口函数（如 `SUM(...) OVER (PARTITION BY ...)`）
+  - 高级 `SELECT` 语法，如 `SELECT * EXCLUDE (...)` 和 `SELECT COLUMNS('<regex>')`
+- **文件系统函数**：使用 glob 模式查询 Parquet 或 CSV 文件集合（如 `"s3://my-data/2025/**/*.parquet"`）
+
+---
+
+## 🛠️ 开发与管理命令
+
+使用这些 `make` 命令来管理您的开发生命周期。
+
+| 命令 | 描述 |
+| :--- | :--- |
+| `make up scale=N` | 启动具有 `N` 个工作节点的集群 |
+| `make down` | 安全地停止和移除运行中的容器 |
+| `make logs` | 从所有服务实时查看日志 |
+| `make build` | 代码更改后重新构建 Docker 镜像 |
+| `make test` | 在 `ray-head` 容器内运行 `pytest` 测试套件 |
+| `make clean` | **危险：** 停止容器并删除所有数据卷 |
+
+---
+
+## 🗺️ 项目路线图
+
+- [✔] 支持分布式 `JOIN` 操作
+- [✔] 支持窗口函数（`OVER`、`PARTITION BY`）
+- [ ] 与 **Apache Iceberg** 或 **Delta Lake** 等元数据目录集成
+- [ ] 用于更好开发者体验的专用 Python 客户端（SDK）
+
+---
+
+## 🤝 贡献
+
+您所做的任何贡献都非常棒！请随时提交问题或 Pull Request。
+
+## 🤖 AI 辅助开发
+
+本项目利用 AI 工具加速开发并改进文档。
+
+所有核心架构决策、调试和最终测试均为**人工驱动**，以确保质量和正确性。
+
+---
+
+## 📄 许可证
+
+本项目根据 MIT 许可证获得许可。有关详细信息，请参阅 [LICENSE](LICENSE) 文件。
